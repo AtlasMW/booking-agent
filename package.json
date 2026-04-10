@@ -2,7 +2,6 @@
   "name": "booking-agent",
   "version": "1.0.0",
   "description": "AI booking agent - reads emails and syncs to GoHighLevel",
-  "type": "module",
   "scripts": {
     "register-webhook": "node scripts/registerWebhook.js"
   },

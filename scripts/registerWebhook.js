@@ -6,7 +6,7 @@ const AGENTMAIL_API_KEY = process.env.AGENTMAIL_API_KEY;
 const VERCEL_URL = process.env.VERCEL_URL; // e.g. booking-agent.vercel.app
 
 if (!AGENTMAIL_API_KEY || !VERCEL_URL) {
-  console.error('❌ Missing environment variables. Set AGENTMAIL_API_KEY and VERCEL_URL');
+  console.error('Missing environment variables. Set AGENTMAIL_API_KEY and VERCEL_URL');
   process.exit(1);
 }
 
@@ -23,19 +23,19 @@ async function registerWebhook() {
     },
     body: JSON.stringify({
       url: webhookUrl,
-      event_types: ['message.received'], // Only fire on new incoming emails
+      event_types: ['message.received'],
     }),
   });
 
   const data = await res.json();
 
   if (res.ok) {
-    console.log('✅ Webhook registered successfully!');
+    console.log('Webhook registered successfully!');
     console.log('Webhook ID:', data.id || data.webhook_id);
     console.log('URL:', webhookUrl);
     console.log('\nYour agent is now live. Forward booking emails to: atlasdrifter@agentmail.to');
   } else {
-    console.error('❌ Failed to register webhook:', data);
+    console.error('Failed to register webhook:', data);
   }
 }
 
