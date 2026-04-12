@@ -5,11 +5,12 @@ const { parseBookingEmail } = require('../lib/parseEmail.js');
 const { findClient, logBooking, updateLog, isAlreadyProcessed } = require('../lib/clientMatcher.js');
 const {
   findContactByEmail,
-  findContactByName,
+  findContactFuzzy,
   findPipelineAndStage,
   findOpportunityByContact,
   updateOpportunityStage,
   createAppointment,
+  getCalendarTimezone,
 } = require('../lib/ghl.js');
 
 console.log('[webhook] Module loaded successfully');
@@ -109,10 +110,13 @@ async function processWebhook(payload) {
   // Update log with extracted data
   Object.assign(logEntry, {
     booking_type: booking.type,
+    booking_source: booking.source,
     extracted_business_name: booking.businessName,
     extracted_contact_name: booking.contactName,
     extracted_contact_email: booking.contactEmail,
     extracted_contact_phone: booking.contactPhone,
+    extracted_masked_email: booking.maskedEmail,
+    extracted_phone_fragment: booking.phoneFragment,
     extracted_service: booking.service,
     extracted_staff: booking.staff,
     extracted_datetime: booking.datetime,
@@ -137,24 +141,28 @@ async function processWebhook(payload) {
     ? client.confirmed_stage_name
     : client.cancelled_stage_name;
 
-  // STEP 3: Find contact in GHL
-  console.log('[webhook] STEP 3: Finding contact in GHL...');
+  // STEP 3: Find contact in GHL using enhanced fuzzy matching
+  console.log('[webhook] STEP 3: Finding contact in GHL (enhanced matching)...');
   let contact = null;
-  if (booking.contactEmail) {
-    contact = await findContactByEmail(apiKey, locationId, booking.contactEmail);
-  }
-  if (!contact && booking.contactName) {
-    contact = await findContactByName(apiKey, locationId, booking.contactName);
-  }
+
+  // Use fuzzy matching which handles both Fresha (partial data) and Timely (full data)
+  contact = await findContactFuzzy(apiKey, locationId, booking);
 
   if (contact) {
-    console.log(`[webhook] Found GHL contact: ${contact.id}`);
+    const matchNote = contact._multipleMatches
+      ? ` (WARNING: ${contact._matchCount} similar matches found — using best candidate)`
+      : '';
+    console.log(`[webhook] Found GHL contact: ${contact.id}${matchNote}`);
     logEntry.ghl_contact_id = contact.id;
+
+    if (contact._multipleMatches) {
+      logEntry.match_warning = `Multiple matches (${contact._matchCount}) — manual review recommended`;
+    }
   } else {
-    console.log('[webhook] No GHL contact found — will still create appointment');
+    console.log('[webhook] No GHL contact found');
   }
 
-  // STEP 4: Find and update opportunity (only if contact found)
+  // STEP 4: Find and update opportunity
   let opportunityUpdated = false;
   if (contact) {
     console.log('[webhook] STEP 4: Finding opportunity...');
@@ -177,7 +185,7 @@ async function processWebhook(payload) {
         logEntry.error_message = `Pipeline stage not found: ${stageName}`;
       }
     } else {
-      console.log('[webhook] No opportunity found — skipping pipeline update');
+      console.log('[webhook] No opportunity found for contact — skipping pipeline update');
       logEntry.opportunity_found = false;
     }
   }
@@ -185,11 +193,18 @@ async function processWebhook(payload) {
   // STEP 5: Create calendar appointment
   console.log('[webhook] STEP 5: Creating appointment...');
   let appointmentCreated = false;
+
+  // Get calendar timezone for accurate datetime conversion
+  let timezone = null;
+  try {
+    timezone = await getCalendarTimezone(apiKey, locationId, calendarId);
+    console.log(`[webhook] Calendar timezone: ${timezone}`);
+  } catch (err) {
+    console.warn('[webhook] Could not fetch calendar timezone:', err.message);
+  }
+
   if (contact) {
-    const appointmentId = await createAppointment(apiKey, locationId, calendarId, contact.id, {
-      ...booking,
-      contactName: booking.contactName,
-    });
+    const appointmentId = await createAppointment(apiKey, locationId, calendarId, contact.id, booking, timezone);
 
     if (appointmentId) {
       console.log(`[webhook] Appointment created: ${appointmentId}`);
@@ -202,13 +217,22 @@ async function processWebhook(payload) {
     }
   } else {
     console.warn('[webhook] Skipping appointment creation — no contact found in GHL');
-    logEntry.error_message = 'No GHL contact found; appointment skipped';
+    logEntry.error_message = 'No GHL contact found; appointment and pipeline update skipped';
   }
 
   // STEP 6: Final status
-  const status = appointmentCreated ? 'success' : (logEntry.client_matched ? 'partial' : 'failed');
-  logEntry.processing_status = status;
+  let status;
+  if (appointmentCreated && opportunityUpdated) {
+    status = 'success';
+  } else if (appointmentCreated || opportunityUpdated) {
+    status = 'partial';
+  } else if (logEntry.client_matched) {
+    status = 'partial';
+  } else {
+    status = 'failed';
+  }
 
+  logEntry.processing_status = status;
   await logBooking(logEntry);
   console.log(`[webhook] Processing complete. Status: ${status}`);
 }
