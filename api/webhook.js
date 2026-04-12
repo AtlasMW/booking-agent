@@ -7,6 +7,7 @@ const {
   findContactByEmail,
   findContactFuzzy,
   findPipelineAndStage,
+  findStageInPipeline,
   findOpportunityByContact,
   updateOpportunityStage,
   createAppointment,
@@ -136,10 +137,12 @@ async function processWebhook(payload) {
   console.log(`[webhook] Matched client: ${client.business_name}`);
   logEntry.client_matched = true;
 
-  const { ghl_api_key: apiKey, ghl_location_id: locationId, ghl_calendar_id: calendarId } = client;
+  const { ghl_api_key: apiKey, ghl_location_id: locationId, ghl_calendar_id: calendarId, ghl_pipeline_id: clientPipelineId } = client;
   const stageName = booking.type === 'confirmed'
     ? client.confirmed_stage_name
     : client.cancelled_stage_name;
+  
+  console.log(`[webhook] Client pipeline ID: ${clientPipelineId || 'not set'} | Location keyword: ${client.location_keyword || 'none'}`);
 
   // STEP 3: Find contact in GHL using enhanced fuzzy matching
   console.log('[webhook] STEP 3: Finding contact in GHL (enhanced matching)...');
@@ -169,19 +172,44 @@ async function processWebhook(payload) {
     const opportunity = await findOpportunityByContact(apiKey, locationId, contact.id);
 
     if (opportunity) {
-      console.log(`[webhook] Found opportunity: ${opportunity.id}`);
+      console.log(`[webhook] Found opportunity: ${opportunity.id} (current pipeline: ${opportunity.pipelineId})`);
       logEntry.opportunity_found = true;
       logEntry.opportunity_id = opportunity.id;
 
-      // Find the pipeline stage ID
-      const stageInfo = await findPipelineAndStage(apiKey, locationId, stageName);
+      // Use the pipeline ID from the client record if available, otherwise search
+      let pipelineId = clientPipelineId;
+      let stageId = null;
 
-      if (stageInfo) {
-        opportunityUpdated = await updateOpportunityStage(apiKey, opportunity.id, stageInfo.pipelineId, stageInfo.stageId);
-        console.log(`[webhook] Opportunity stage updated: ${opportunityUpdated}`);
+      if (pipelineId) {
+        // Find the stage within this specific pipeline
+        const stageInfo = await findPipelineAndStage(apiKey, locationId, stageName);
+        if (stageInfo) {
+          // Only use the stage if it belongs to our target pipeline
+          if (stageInfo.pipelineId === pipelineId) {
+            stageId = stageInfo.stageId;
+          } else {
+            // Stage name exists but in wrong pipeline — search the correct one
+            const allStages = await findStageInPipeline(apiKey, locationId, pipelineId, stageName);
+            if (allStages) {
+              stageId = allStages.stageId;
+            }
+          }
+        }
+      } else {
+        // No pipeline ID stored — fall back to searching all pipelines
+        const stageInfo = await findPipelineAndStage(apiKey, locationId, stageName);
+        if (stageInfo) {
+          pipelineId = stageInfo.pipelineId;
+          stageId = stageInfo.stageId;
+        }
+      }
+
+      if (pipelineId && stageId) {
+        opportunityUpdated = await updateOpportunityStage(apiKey, opportunity.id, pipelineId, stageId);
+        console.log(`[webhook] Opportunity stage updated: ${opportunityUpdated} (pipeline: ${pipelineId})`);
         logEntry.opportunity_updated = opportunityUpdated;
       } else {
-        console.warn(`[webhook] Stage not found: "${stageName}"`);
+        console.warn(`[webhook] Could not find stage "${stageName}" in pipeline ${pipelineId}`);
         logEntry.error_message = `Pipeline stage not found: ${stageName}`;
       }
     } else {
