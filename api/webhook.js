@@ -24,7 +24,7 @@ module.exports = async function handler(req, res) {
 
   console.log('[webhook] Payload received:', JSON.stringify(req.body).substring(0, 500));
 
-try {
+  try {
     await processWebhook(req.body);
     res.status(200).json({ received: true, status: 'processed' });
   } catch (err) {
