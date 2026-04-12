@@ -125,7 +125,7 @@ async function processWebhook(payload) {
 
   // STEP 2: Match to a client in Supabase
   console.log(`[webhook] STEP 2: Finding client for: "${booking.businessName}"...`);
-  const client = await findClient(booking.businessName);
+  const client = await findClient(booking.businessName, booking.location);
 
   if (!client) {
     console.warn(`[webhook] No client found for business: "${booking.businessName}"`);
