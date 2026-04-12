@@ -24,15 +24,12 @@ module.exports = async function handler(req, res) {
 
   console.log('[webhook] Payload received:', JSON.stringify(req.body).substring(0, 500));
 
-  // Return 200 immediately so AgentMail doesn't retry
-  // We process in the background
-  res.status(200).json({ received: true });
-
-  // Now process asynchronously
-  try {
+try {
     await processWebhook(req.body);
+    res.status(200).json({ received: true, status: 'processed' });
   } catch (err) {
     console.error('[webhook] Unhandled error in processWebhook:', err);
+    res.status(500).json({ received: true, error: err.message });
   }
 };
 
