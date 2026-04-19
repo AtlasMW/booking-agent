@@ -141,7 +141,7 @@ async function processWebhook(payload) {
   const stageName = booking.type === 'confirmed'
     ? client.confirmed_stage_name
     : client.cancelled_stage_name;
-  
+
   console.log(`[webhook] Client pipeline ID: ${clientPipelineId || 'not set'} | Location keyword: ${client.location_keyword || 'none'}`);
 
   // STEP 3: Find contact in GHL using enhanced fuzzy matching
@@ -222,14 +222,9 @@ async function processWebhook(payload) {
   console.log('[webhook] STEP 5: Creating appointment...');
   let appointmentCreated = false;
 
-  // Get calendar timezone for accurate datetime conversion
-  let timezone = null;
-  try {
-    timezone = await getCalendarTimezone(apiKey, locationId, calendarId);
-    console.log(`[webhook] Calendar timezone: ${timezone}`);
-  } catch (err) {
-    console.warn('[webhook] Could not fetch calendar timezone:', err.message);
-  }
+  // Use timezone from client record in Supabase
+  const timezone = client.timezone || null;
+  console.log(`[webhook] Client timezone: ${timezone}`);
 
   if (contact) {
     const appointmentId = await createAppointment(apiKey, locationId, calendarId, contact.id, booking, timezone);
